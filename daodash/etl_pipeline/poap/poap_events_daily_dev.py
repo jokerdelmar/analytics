@@ -19,21 +19,24 @@ db_string = os.environ.get('DB_STRING')
 engine = sa.create_engine(db_string)
 print("Postgres Connected")
 
-# pulling data from poap api and exporting to .csv
-output_path = 'export.csv'
-# traverse through data in increments of 1000
-for i in range(0, 25000, 1000):
+
+# traverse through data in increments of 1000 and break when end of file is encountered
+# append the dict with each increment
+for i in range(0, 999999, 1000):
     response = requests.get(
-        f"https://api.poap.xyz/paginated-events?limit=100&offset={i}"
+        f"https://api.poap.xyz/paginated-events?limit=1000&offset={i}"
         f"&sort_field=start_date&sort_dir=desc&private_event=false")
     json_data = response.json()
-    # export dataframe to csv
-    data = pd.json_normalize(json_data, 'items').to_csv(output_path, mode='a', header=not os.path.exists(output_path),
-                                                        index=False)
+    # append the dict
+    data = pd.json_normalize(json_data, 'items').append(data)
+
+    # break condition for EOF
+    if not json_data['items']:
+        break
+
 # filter for bankless events
-event_data = pd.read_csv(output_path, index_col=False)
-mask = event_data['fancy_id'].str.contains('bankless', case=False, na=False)
-bankless_event_id = event_data[mask]['id']
+mask = data['fancy_id'].str.contains('bankless', case=False, na=False)
+bankless_event_id = data[mask]['id']
 # convert id values to csv for graphql
 bankless_event_list = bankless_event_id.values.tolist()
 
@@ -124,3 +127,6 @@ def load_df():
 
 # uncomment to run load_df() which pushes up backup to database
 load_df()
+
+
+
