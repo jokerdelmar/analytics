@@ -22,6 +22,8 @@ print("Postgres Connected")
 
 # traverse through data in increments of 1000 and break when end of file is encountered
 # append the dict with each increment
+data = pd.DataFrame()
+
 for i in range(0, 999999, 1000):
     response = requests.get(
         f"https://api.poap.xyz/paginated-events?limit=1000&offset={i}"
@@ -107,10 +109,6 @@ def transform_df():
     df2 = df2.reset_index()
     df3 = df2.rename(columns={'index': 'id'}, inplace=False)
     return df3
-
-
-# open db connection
-db = engine(db_string)
 
 
 def load_df():
