@@ -19,7 +19,6 @@ db_string = os.environ.get('DB_STRING')
 engine = sa.create_engine(db_string)
 print("Postgres Connected")
 
-
 # traverse through data in increments of 1000 and break when end of file is encountered
 # append the dict with each increment
 data = pd.DataFrame()
@@ -89,26 +88,43 @@ def transform_df():
     """description:
     Convert list_of_dict into dataframe
     Rename and reorder columns
-    Important: Increment index with 'max_id' from postgres connection above
-    Reset dataframe index in preparation for loading back to database
     args: none
     return: properly formatted dataframe
     """
     df = pd.json_normalize(extract_list_of_dict())
     # converting epoch to timestamp
     df['created'] = pd.to_datetime(df['created'], unit='s')
-    df2 = df.rename(columns={'id': 'event_id',
-                             'tokenCount': 'token_count',
+    # converting id from int64 to int
+    df['id'] = df['id'].astype(int)
+    df2 = df.rename(columns={'tokenCount': 'token_count',
                              'transferCount': 'transfer_count',
-                             'created': 'created_ts'}, inplace=False)
+                             'created': 'created_ts'})
 
-    list_of_col_names = ['event_id', 'token_count', 'transfer_count', 'created_ts']
+    list_of_col_names = ['id', 'token_count', 'transfer_count', 'created_ts']
     df2 = df2.filter(list_of_col_names)
     # IMPORTANT
     # df2.index += max_id
-    df2 = df2.reset_index()
-    df3 = df2.rename(columns={'index': 'id'}, inplace=False)
-    return df3
+    # df2 = df2.reset_index()
+    # df3 = df2.rename(columns={'index': 'id'}, inplace=False)
+    return df2
+
+
+def merge_df():
+    """description:
+    Merge API request dataset with GraphQL dataset
+    Rename id to event_id
+    args: none
+    return: properly formatted dataframe
+    """
+    dataframe = transform_df()
+    merge_dataframe = pd.merge(data[mask], dataframe,  left_on='id', right_on='id', how='left')
+    merge_list_of_col_names = ['id', 'fancy_id', 'name', 'event_url', 'image_url', 'country', 'city',
+                               'description', 'year', 'start_date', 'end_date', 'expiry_date',
+                               'from_admin', 'virtual_event', 'event_template_id', 'event_host_id',
+                               'private_event' 'token_count', 'transfer_count', 'created_ts']
+    merge_dataframe = merge_dataframe.filter(merge_list_of_col_names)
+    merge_dataframe = merge_dataframe.rename(columns={'id': 'event_id'})
+    return merge_dataframe
 
 
 def load_df():
@@ -117,7 +133,7 @@ def load_df():
     args: none
     return: properly formatted dataframe
     """
-    dataframe = transform_df()
+    dataframe = merge_df()
     dataframe.to_sql('poap_events', con=db_string,
                      if_exists='replace', index=False)
     print("successful push, poap_events table is now updated.")
@@ -125,6 +141,3 @@ def load_df():
 
 # uncomment to run load_df() which pushes up backup to database
 load_df()
-
-
-
