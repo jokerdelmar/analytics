@@ -1,6 +1,7 @@
 # libraries for postgres connection
 import os
 import sqlalchemy as sa
+import psycopg2
 
 # http connection
 import requests
@@ -14,10 +15,37 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # NOTE: need to use environment variables to separate password from this file
-# db_string = 'postgresql://user:password@localhost:port/mydatabase'
 db_string = os.environ.get('DB_STRING')
 engine = sa.create_engine(db_string)
 print("Postgres Connected")
+
+
+def pg_max_event():
+    """description:
+    Pull the latest event from poap_events table for incremental loads
+    If table does not exist return 1
+    """
+    conn = psycopg2.connect(user=os.environ.get('pg_user'),
+                            password=os.environ.get('pg_password'),
+                            host="db-postgresql-sfo3-66374-do-user-9934748-0.b.db.ondigitalocean.com",
+                            port="25060",
+                            database="dao_dash")
+
+    # Open Cursor
+    cursor = conn.cursor()
+
+    query = "SELECT coalesce(max(event_id),1) as max_event FROM poap_events"
+    cursor.execute(query)ß
+    max_val = cursor.fetchall()
+
+    # Close Cursor
+    cursor.close()
+
+    # Return the max(event_id) as int
+    return max_val[0][0]
+
+
+print(f"Latest Bankless Event ID from poap_events: {pg_max_event()}")
 
 # traverse through data in increments of 1000 and break when end of file is encountered
 # append the dict with each increment
@@ -35,10 +63,17 @@ for i in range(0, 999999, 1000):
     if not json_data['items']:
         break
 
-# filter for bankless events
-mask = data['fancy_id'].str.contains('bankless', case=False, na=False)
-bankless_event_id = data[mask]['id']
-# convert id values to csv for graphql
+# filter for bankless events by looking up "bankless" in fancy_id, name, event_url, description fields
+bankless_events = data[data['fancy_id'].str.contains('bankless', case=False, na=False)
+                       | data['name'].str.contains('bankless', case=False, na=False)
+                       | data['event_url'].str.contains('bankless', case=False, na=False)
+                       | data['description'].str.contains('bankless', case=False, na=False)]
+
+# Only new events, i.e. Events that are not in Database
+delta_events = bankless_events[bankless_events['id'] > pg_max_event()]
+
+# Fetch event_ids from ID field and convert to csv for graphql input
+bankless_event_id = delta_events['id']
 bankless_event_list = bankless_event_id.values.tolist()
 
 # POAP Subgraph GraphQL query
@@ -86,27 +121,28 @@ def extract_list_of_dict():
 
 def transform_df():
     """description:
-    Convert list_of_dict into dataframe
+    Convert list_of_dict into dataframe, if the Graph returns no records generate an empty dataframe
     Rename and reorder columns
     args: none
     return: properly formatted dataframe
     """
-    df = pd.json_normalize(extract_list_of_dict())
-    # converting epoch to timestamp
-    df['created'] = pd.to_datetime(df['created'], unit='s')
-    # converting id from int64 to int
-    df['id'] = df['id'].astype(int)
-    df2 = df.rename(columns={'tokenCount': 'token_count',
-                             'transferCount': 'transfer_count',
-                             'created': 'created_ts'})
+    try:
+        df = pd.json_normalize(extract_list_of_dict())
+        # converting epoch to timestamp
+        df['created'] = pd.to_datetime(df['created'], unit='s')
+        # converting id from int64 to int
+        df['id'] = df['id'].astype(int)
+        df2 = df.rename(columns={'tokenCount': 'token_count',
+                                 'transferCount': 'transfer_count',
+                                 'created': 'created_ts'})
 
-    list_of_col_names = ['id', 'token_count', 'transfer_count', 'created_ts']
-    df2 = df2.filter(list_of_col_names)
-    # IMPORTANT
-    # df2.index += max_id
-    # df2 = df2.reset_index()
-    # df3 = df2.rename(columns={'index': 'id'}, inplace=False)
-    return df2
+        list_of_col_names = ['id', 'token_count', 'transfer_count', 'created_ts']
+        df2 = df2.filter(list_of_col_names)
+        return df2
+
+    except:
+        empty_data = {'id': [9999999], 'token_count': [99999999], 'transfer_count': [9999999], 'created_ts': None}
+        return pd.DataFrame(empty_data)
 
 
 def merge_df():
@@ -117,7 +153,7 @@ def merge_df():
     return: properly formatted dataframe
     """
     dataframe = transform_df()
-    merge_dataframe = pd.merge(data[mask], dataframe,  left_on='id', right_on='id', how='left')
+    merge_dataframe = pd.merge(delta_events, dataframe, left_on='id', right_on='id', how='left')
     merge_list_of_col_names = ['id', 'fancy_id', 'name', 'event_url', 'image_url', 'country', 'city',
                                'description', 'year', 'start_date', 'end_date', 'expiry_date',
                                'from_admin', 'virtual_event', 'event_template_id', 'event_host_id',
@@ -135,7 +171,7 @@ def load_df():
     """
     dataframe = merge_df()
     dataframe.to_sql('poap_events', con=db_string,
-                     if_exists='replace', index=False)
+                     if_exists='append', index=False)
     print("successful push, poap_events table is now updated.")
 
 
