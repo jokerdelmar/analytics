@@ -91,7 +91,6 @@ def run_query():
     """description:
     Make request to BANK subgraph api endpoint
     Use 'query' object as parameters for request
-    arg: 'q' or none
     return: POAP data as json object
     raise: Exception if api connection unsuccessful
     """
