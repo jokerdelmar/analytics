@@ -35,7 +35,7 @@ def pg_max_event():
     cursor = conn.cursor()
 
     query = "SELECT coalesce(max(event_id),1) as max_event FROM poap_events"
-    cursor.execute(query)ß
+    cursor.execute(query)
     max_val = cursor.fetchall()
 
     # Close Cursor
